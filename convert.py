@@ -65,13 +65,13 @@ def _parse_include_guard(line, data):
 
 def _parse_reg(line, data):
     if 'registers' not in data:
-        data['registers'] = {}
+        data['registers'] = []
     m = re.search('// Register:\s+(.+)', line)
     if m:
         reg = m.group(1)
-        data['registers'][reg] = {
-            'done': False
-        }
+        data['registers'].append({
+            'name': reg
+        })
         return _parse_reg
 
 
@@ -185,11 +185,11 @@ class Parsers(TestCase):
         line = '// Register: INDF0'
         data = {}
         expected = {
-            'registers': {
-                'INDF0': {
-                    'done': False
+            'registers': [
+                {
+                    'name': 'INDF0'
                 }
-            }
+            ]
         }
         expected_next_parser = _parse_reg
 
