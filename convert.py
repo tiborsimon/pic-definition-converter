@@ -1,9 +1,15 @@
 import os
 import sys
 import re
+import time
 from unittest import TestCase
 
 WORD_WIDTH = '0xff'
+PRODUCTION = False
+
+def production_print(s):
+    if PRODUCTION:
+        print(s)
 
 def init():
     if not os.path.isdir('input'):
@@ -24,15 +30,15 @@ def get_file_list():
     files = os.listdir('input')
     files = [os.path.join(os.getcwd(), 'input', file) for file in files if file.endswith('.h')]
     if not files:
-        print('There is no relevant header files in the input directory. Nothing to do..')
+        production_print('There is no relevant header files in the input directory. Nothing to do..')
         sys.exit(1)
     return files
 
 
 def get_next_file_content():
     for path in get_file_list():
-        print('Processing file: {}'.format(path))
-        yield get_file_content(path)
+        production_print('Processing file: {}'.format(path))
+        yield (os.path.basename(path), get_file_content(path))
 
 
 def _parse_version(line, data):
@@ -40,7 +46,7 @@ def _parse_version(line, data):
     if m:
         version = m.group(1)
         data['version'] = version
-        print('File version: {}'.format(version))
+        production_print('File version: {}'.format(version))
         return _parse_license
     else:
         return _parse_version
@@ -51,7 +57,7 @@ def _parse_license(line, data):
         data['license'] = []
     data['license'].append(line)
     if re.search('\*/', line):
-        print('License parsed')
+        production_print('License parsed')
         return _parse_include_guard
     else:
         return _parse_license
@@ -62,8 +68,8 @@ def _parse_include_guard(line, data):
     if m:
         guard = m.group(1)
         data['guard'] = guard
-        print('Include guard: {}'.format(guard))
-        print('')
+        production_print('Include guard: {}'.format(guard))
+        production_print('')
         return _parse_include_guard
     m = re.search('#define\s+(.+)', line)
     if m:
@@ -72,19 +78,19 @@ def _parse_include_guard(line, data):
 
 
 def _parse_reg(line, data):
-    if 'registers' not in data:
-        data['registers'] = []
 
     # parse register name
     m = re.search('// Register:\s+(.+)', line)
     if m:
+        if 'registers' not in data:
+            data['registers'] = []
         reg = m.group(1)
         data['registers'].append({
             'name': reg
         })
         return _parse_reg
 
-    if len(data['registers']) > 0:
+    if 'registers' in data and len(data['registers']) > 0:
         last_reg = data['registers'][-1]
     else:
         return _parse_reg
@@ -94,7 +100,7 @@ def _parse_reg(line, data):
     if m:
         address = m.group(1)
         last_reg['address'] = address
-        print('Register {} @ {}'.format(last_reg['name'], address))
+        production_print('Register {} @ {}'.format(last_reg['name'], address))
         return _parse_reg
 
     # parse register section position
@@ -107,7 +113,7 @@ def _parse_reg(line, data):
         if name not in last_reg['sections']:
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['position'] = position
-        print('  {} position: {}'.format(name, position))
+        production_print('  {} position: {}'.format(name, position))
         return _parse_reg
 
     # parse register section size
@@ -120,7 +126,7 @@ def _parse_reg(line, data):
         if name not in last_reg['sections']:
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['size'] = size
-        print('  {} size: {}'.format(name, size))
+        production_print('  {} size: {}'.format(name, size))
         return _parse_reg
 
     # parse register section masks
@@ -135,31 +141,147 @@ def _parse_reg(line, data):
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['value-mask'] = value_mask
         last_reg['sections'][name]['clear-mask'] = clear_mask
-        print('  {} value-mask: {}'.format(name, value_mask))
-        print('  {} clear-mask: {}'.format(name, clear_mask))
+        production_print('  {} value-mask: {}'.format(name, value_mask))
+        production_print('  {} clear-mask: {}'.format(name, clear_mask))
         return _parse_reg
 
     return _parse_reg
 
 
-def generate_definition(lines):
-    data = {}
+def generate_definition(filename, lines):
+    data = {
+        'filename': filename
+    }
     parser = _parse_version
     for line in lines:
         parser = parser(line, data)
     return data
 
+HEADER = '''\
+/* Generated on {date}
+===============================================================================
+      P I C   T D D   R E A D Y   R E G I S T E R   D E F I N I T I O N
+===============================================================================
+
+Created by Tibor Simon - tiborsimon.io
+Generator script:  https://github.com/tiborsimon/pic-definition-converter
+
+Based on the register definition header file v{version} provided by Microchip.
+Original definition date and license: */
+
+{license}
+
+'''
+
+HEADER_GUARD_START = '''\
+#ifndef {guard}
+#define {guard}
+'''
+
+HEADER_GUARD_STOP = '''\
+#endif // {guard}
+'''
 
 
-def write_definition(lines):
-    pass
+def write_definition(data):
+
+    lines = []
+    date = time.strftime("%Y-%m-%d")
+    version = data['version']
+    license = '\n'.join(data['license'])
+    guard = data['guard']
+    lines.append(HEADER.format(date=date, version=version, license=license))
+    lines.append(HEADER_GUARD_START.format(guard=guard))
+    lines.append('\n')
+
+    for reg in data['registers']:
+        if 'sections' in reg:
+            lines.append('// Register {}\n'.format(reg['name']))
+            for section_name in reg['sections']:
+                section = reg['sections'][section_name]
+                lines.append('#define {}\n'.format(section_name))
+                lines.append('#define {}_address     {}\n'.format(section_name, reg['address']))
+                lines.append('#define {}_position    {}\n'.format(section_name, section['position']))
+                lines.append('#define {}_size        {}\n'.format(section_name, section['size']))
+                lines.append('#define {}_value_mask  {}\n'.format(section_name, section['value-mask']))
+                lines.append('#define {}_clear_mask  {}\n'.format(section_name, section['clear-mask']))
+                lines.append('\n')
+
+
+    lines.append(HEADER_GUARD_STOP.format(guard=guard))
+
+    with open(os.path.join('output', data['filename']), 'w+') as f:
+        for line in lines:
+            f.write(line)
+
+def normalize_data(data):
+    for reg in data['registers']:
+        index = data['registers'].index(reg)
+        if 'sections' in reg:
+            for section_name in reg['sections']:
+                for other_reg in data['registers'][index:]:
+                    if 'sections' in other_reg:
+                        for other_section_name in other_reg['sections']:
+                            if section_name == other_section_name:
+                                pass
 
 
 if __name__ == '__main__':
+    global PRODUCTION
+    PRODUCTION = True
     init()
-    for lines in get_next_file_content():
-        definition = generate_definition(lines)
+    for filename, lines in get_next_file_content():
+        definition = generate_definition(filename, lines)
 
+        write_definition(definition)
+
+
+class DataNormalization(TestCase):
+    def test_data_normalization(self):
+        data = {
+            'registers': [
+                {
+                    'name': 'REGA',
+                    'sections': {
+                        'A': {
+                            'a': None
+                        }
+                    }
+                },
+                {
+                    'name': 'REGB',
+                    'sections': {
+                        'A': {
+                            'b': None
+                        }
+
+                    }
+                }
+            ]
+        }
+        expected = {
+            'registers': [
+                {
+                    'name': 'REGA',
+                    'sections': {
+                        'REGA_A': {
+                            'a': None
+                        }
+                    }
+                },
+                {
+                    'name': 'REGB',
+                    'sections': {
+                        'REGB_A': {
+                            'b': None
+                        }
+
+                    }
+                }
+            ]
+        }
+        result = normalize_data(data)
+        self.assertEquals(expected, result)
 
 class Parsers(TestCase):
     def test_version_parser_on_match(self):
@@ -388,6 +510,17 @@ class Parsers(TestCase):
                 }
             ]
         }
+        expected_next_parser = _parse_reg
+
+        result = _parse_reg(line, data)
+
+        self.assertEqual(expected_next_parser, result)
+        self.assertEqual(expected, data)
+
+    def test__parse_register_no_mathch(self):
+        line = 'helloka'
+        data = {}
+        expected = {}
         expected_next_parser = _parse_reg
 
         result = _parse_reg(line, data)
