@@ -3,6 +3,7 @@ import sys
 import re
 from unittest import TestCase
 
+WORD_WIDTH = '0xff'
 
 def init():
     if not os.path.isdir('input'):
@@ -28,15 +29,18 @@ def get_file_list():
     return files
 
 
-def get_next_data():
+def get_next_file_content():
     for path in get_file_list():
+        print('Processing file: {}'.format(path))
         yield get_file_content(path)
 
 
 def _parse_version(line, data):
     m = re.search('Version\s+(.+)', line)
     if m:
-        data['version'] = m.group(1)
+        version = m.group(1)
+        data['version'] = version
+        print('File version: {}'.format(version))
         return _parse_license
     else:
         return _parse_version
@@ -47,6 +51,7 @@ def _parse_license(line, data):
         data['license'] = []
     data['license'].append(line)
     if re.search('\*/', line):
+        print('License parsed')
         return _parse_include_guard
     else:
         return _parse_license
@@ -55,7 +60,10 @@ def _parse_license(line, data):
 def _parse_include_guard(line, data):
     m = re.search('#ifndef\s+(.+)', line)
     if m:
-        data['guard'] = m.group(1)
+        guard = m.group(1)
+        data['guard'] = guard
+        print('Include guard: {}'.format(guard))
+        print('')
         return _parse_include_guard
     m = re.search('#define\s+(.+)', line)
     if m:
@@ -66,6 +74,8 @@ def _parse_include_guard(line, data):
 def _parse_reg(line, data):
     if 'registers' not in data:
         data['registers'] = []
+
+    # parse register name
     m = re.search('// Register:\s+(.+)', line)
     if m:
         reg = m.group(1)
@@ -74,23 +84,81 @@ def _parse_reg(line, data):
         })
         return _parse_reg
 
+    if len(data['registers']) > 0:
+        last_reg = data['registers'][-1]
+    else:
+        return _parse_reg
+
+    # parse register address
+    m = re.search('extern\s+volatile\s+unsigned\s+char\s+{}\s+@\s+(0x[0-9A-Fa-f]+);'.format(last_reg['name']), line)
+    if m:
+        address = m.group(1)
+        last_reg['address'] = address
+        print('Register {} @ {}'.format(last_reg['name'], address))
+        return _parse_reg
+
+    # parse register section position
+    m = re.search('#define\s+_{}_(\w+)_POSITION\s+(0x[0-9A-Fa-f]+)'.format(last_reg['name']), line)
+    if m:
+        name = m.group(1)
+        position = m.group(2)
+        if 'sections' not in last_reg:
+            last_reg['sections'] = {}
+        if name not in last_reg['sections']:
+            last_reg['sections'][name] = {}
+        last_reg['sections'][name]['position'] = position
+        print('  {} position: {}'.format(name, position))
+        return _parse_reg
+
+    # parse register section size
+    m = re.search('#define\s+_{}_(\w+)_SIZE\s+(0x[0-9A-Fa-f]+)'.format(last_reg['name']), line)
+    if m:
+        name = m.group(1)
+        size = m.group(2)
+        if 'sections' not in last_reg:
+            last_reg['sections'] = {}
+        if name not in last_reg['sections']:
+            last_reg['sections'][name] = {}
+        last_reg['sections'][name]['size'] = size
+        print('  {} size: {}'.format(name, size))
+        return _parse_reg
+
+    # parse register section masks
+    m = re.search('#define\s+_{}_(\w+)_MASK\s+(0x[0-9A-Fa-f]+)'.format(last_reg['name']), line)
+    if m:
+        name = m.group(1)
+        value_mask = m.group(2)
+        clear_mask = '0x' + format(~int(value_mask, 16) & int(WORD_WIDTH, 16), 'x').upper()
+        if 'sections' not in last_reg:
+            last_reg['sections'] = {}
+        if name not in last_reg['sections']:
+            last_reg['sections'][name] = {}
+        last_reg['sections'][name]['value-mask'] = value_mask
+        last_reg['sections'][name]['clear-mask'] = clear_mask
+        print('  {} value-mask: {}'.format(name, value_mask))
+        print('  {} clear-mask: {}'.format(name, clear_mask))
+        return _parse_reg
+
+    return _parse_reg
+
+
+def generate_definition(lines):
+    data = {}
+    parser = _parse_version
+    for line in lines:
+        parser = parser(line, data)
+    return data
 
 
 
-
-def generate_definition(data):
-    pass
-
-
-def write_definition(data):
+def write_definition(lines):
     pass
 
 
 if __name__ == '__main__':
     init()
-    for data in get_next_data():
-        definition = generate_definition(data)
-        write_definition(data)
+    for lines in get_next_file_content():
+        definition = generate_definition(lines)
 
 
 class Parsers(TestCase):
@@ -198,40 +266,133 @@ class Parsers(TestCase):
         self.assertEqual(expected_next_parser, result)
         self.assertEqual(expected, data)
 
-#     def test__description_parsing_lk(self):
-#         lines = '''\
-# // Version 1.37
-# // Generated 11/03/2016 GMT
-#
-# /*
-#  * Copyright c 2016, Microchip Technology Inc. and its subsidiaries ("Microchip")
-#  * All rights reserved.
-#  *
-#  * This software is developed by Microchip Technology Inc. and its subsidiaries ("Microchip").
-#  *
-#  * Redistribution and use in source and binary forms, with or without modification, are
-#  * permitted provided that the following conditions are met:
-#  *
-#  *     1. Redistributions of source code must retain the above copyright notice, this list of
-#  *        conditions and the following disclaimer.
-#  *
-#  *     2. Redistributions in binary form must reproduce the above copyright notice, this list
-#  *        of conditions and the following disclaimer in the documentation and/or other
-#  *        materials provided with the distribution.
-#  *
-#  *     3. Microchip's name may not be used to endorse or promote products derived from this
-#  *        software without specific prior written permission.
-#  *
-#  * THIS SOFTWARE IS PROVIDED BY MICROCHIP "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
-#  * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-#  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL MICROCHIP BE LIABLE FOR ANY DIRECT, INDIRECT,
-#  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED TO
-#  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA OR PROFITS; OR BUSINESS
-#  * INTERRUPTION) HOWSOEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-#  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-#  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#  *  */'''
-#         lines = lines.split('\n')
-#         expected = dict(lines) + ['', '']
-#         result = _parse_description(lines)
+    def test__parse_register__address_processing(self):
+        line = 'extern volatile unsigned char           INDF0               @ 0x0AF;'
+        data = {
+            'registers': [
+                {
+                    'name': 'INDF0'
+                }
+            ]
+        }
+        expected = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF'
+                }
+            ]
+        }
+        expected_next_parser = _parse_reg
+
+        result = _parse_reg(line, data)
+
+        self.assertEqual(expected_next_parser, result)
+        self.assertEqual(expected, data)
+
+    def test__parse_register__section_position(self):
+        line = '#define _INDF0_INDF0_POSITION                               0x0'
+        data = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF'
+                }
+            ]
+        }
+        expected = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF',
+                    'sections': {
+                        'INDF0': {
+                            'position': '0x0'
+                        }
+                    }
+                }
+            ]
+        }
+        expected_next_parser = _parse_reg
+
+        result = _parse_reg(line, data)
+
+        self.assertEqual(expected_next_parser, result)
+        self.assertEqual(expected, data)
+
+    def test__parse_register__section_size(self):
+        line = '#define _INDF0_INDF0_SIZE                                   0x8'
+        data = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF',
+                    'sections': {
+                        'INDF0': {
+                            'position': '0x0'
+                        }
+                    }
+                }
+            ]
+        }
+        expected = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF',
+                    'sections': {
+                        'INDF0': {
+                            'position': '0x0',
+                            'size': '0x8'
+                        }
+                    }
+                }
+            ]
+        }
+        expected_next_parser = _parse_reg
+
+        result = _parse_reg(line, data)
+
+        self.assertEqual(expected_next_parser, result)
+        self.assertEqual(expected, data)
+
+    def test__parse_register__section_mask(self):
+        line = '#define _INDF0_INDF0_MASK                                   0xF'
+        data = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF',
+                    'sections': {
+                        'INDF0': {
+                            'position': '0x0',
+                            'size': '0x8'
+                        }
+                    }
+                }
+            ]
+        }
+        expected = {
+            'registers': [
+                {
+                    'name': 'INDF0',
+                    'address': '0x0AF',
+                    'sections': {
+                        'INDF0': {
+                            'position': '0x0',
+                            'size': '0x8',
+                            'value-mask': '0xF',
+                            'clear-mask': '0xF0'
+                        }
+                    }
+                }
+            ]
+        }
+        expected_next_parser = _parse_reg
+
+        result = _parse_reg(line, data)
+
+        self.assertEqual(expected_next_parser, result)
+        self.assertEqual(expected, data)
+
 
