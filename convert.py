@@ -215,6 +215,34 @@ def write_definition(data):
         for line in lines:
             f.write(line)
 
+def generate_register_art(reg):
+    pass
+
+
+
+class RegisterArt(TestCase):
+    def test__full_width_section_can_be_rendered(self):
+        input = {
+            'width': 8,
+            'name': 'REGA',
+            'address': '0x123',
+            'sections': {
+                'REGA': {
+                    'position': '0',
+                    'size': '8'
+                }
+            }
+        }
+        expected = '''\
+/*------------------------------#
+| REGA                    0x123 |
+#-------------------------------#
+| 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+#------------------------------*/
+'''
+        result = generate_register_art(input)
+        self.assertEquals(expected, result)
+
 def normalize_definition(definition):
     def rename_section(reg, section_name):
         new_name = reg['name'] + '_' + section_name
