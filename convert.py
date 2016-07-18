@@ -5,6 +5,7 @@ import time
 from unittest import TestCase
 
 WORD_WIDTH = '0xff'
+DEFINITION_PADDING = 40
 PRODUCTION = False
 
 def production_print(s):
@@ -200,11 +201,11 @@ def write_definition(data):
             for section_name in reg['sections']:
                 section = reg['sections'][section_name]
                 lines.append('#define {}\n'.format(section_name))
-                lines.append('#define {}_address     {}\n'.format(section_name, reg['address']))
-                lines.append('#define {}_position    {}\n'.format(section_name, section['position']))
-                lines.append('#define {}_size        {}\n'.format(section_name, section['size']))
-                lines.append('#define {}_value_mask  {}\n'.format(section_name, section['value-mask']))
-                lines.append('#define {}_clear_mask  {}\n'.format(section_name, section['clear-mask']))
+                lines.append('#define {}_address{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-7-len(section_name)), reg['address']))
+                lines.append('#define {}_position{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-8-len(section_name)), section['position']))
+                lines.append('#define {}_size{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-4-len(section_name)), section['size']))
+                lines.append('#define {}_value_mask{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-10-len(section_name)), section['value-mask']))
+                lines.append('#define {}_clear_mask{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-10-len(section_name)), section['clear-mask']))
                 lines.append('\n')
 
 
@@ -214,16 +215,29 @@ def write_definition(data):
         for line in lines:
             f.write(line)
 
-def normalize_data(data):
-    for reg in data['registers']:
-        index = data['registers'].index(reg)
+def normalize_definition(definition):
+    def rename_section(reg, section_name):
+        new_name = reg['name'] + '_' + section_name
+        reg['sections'][new_name] = dict(reg['sections'][section_name])
+        del reg['sections'][section_name]
+
+    for reg in definition['registers']:
+        index = definition['registers'].index(reg)
         if 'sections' in reg:
             for section_name in reg['sections']:
-                for other_reg in data['registers'][index:]:
+                rename_list = []
+                for other_reg in definition['registers'][index+1:]:
                     if 'sections' in other_reg:
                         for other_section_name in other_reg['sections']:
                             if section_name == other_section_name:
-                                pass
+                                rename_list.append({
+                                    'reg': other_reg,
+                                    'section-name': other_section_name
+                                })
+                if rename_list:
+                    rename_section(reg, section_name)
+                    for item in rename_list:
+                        rename_section(item['reg'], item['section-name'])
 
 
 if __name__ == '__main__':
@@ -232,8 +246,14 @@ if __name__ == '__main__':
     init()
     for filename, lines in get_next_file_content():
         definition = generate_definition(filename, lines)
-
+        normalize_definition(definition)
         write_definition(definition)
+
+
+
+#===============================================================================
+#  T E S T   S U I T E
+#===============================================================================
 
 
 class DataNormalization(TestCase):
@@ -280,8 +300,8 @@ class DataNormalization(TestCase):
                 }
             ]
         }
-        result = normalize_data(data)
-        self.assertEquals(expected, result)
+        normalize_definition(data)
+        self.assertEquals(expected, data)
 
 class Parsers(TestCase):
     def test_version_parser_on_match(self):
