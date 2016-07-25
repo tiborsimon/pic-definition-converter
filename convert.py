@@ -192,7 +192,6 @@ HEADER_GUARD_STOP = '''\
 #endif // {guard}
 '''
 
-
 def write_definition(data):
     lines = []
     date = time.strftime("%Y-%m-%d")
@@ -206,15 +205,27 @@ def write_definition(data):
     for reg in data['registers']:
         if 'sections' in reg:
             _add_register_description(lines, reg)
+            _add_register_definition(
+                lines,
+                name=reg['name'],
+                position='0x0',
+                address=reg['address'],
+                size='0x8',
+                value_mask=WORD_WIDTH,
+                clear_mask='0x0'
+            )
             for section_name in reg['sections']:
                 section = reg['sections'][section_name]
-                lines.append('#define {}{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING+1-len(section_name)), section['position']))
-                lines.append('#define {}_address{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-7-len(section_name)), reg['address']))
-                lines.append('#define {}_position{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-8-len(section_name)), section['position']))
-                lines.append('#define {}_size{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-4-len(section_name)), section['size']))
-                lines.append('#define {}_value_mask{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-10-len(section_name)), section['value-mask']))
-                lines.append('#define {}_clear_mask{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-10-len(section_name)), section['clear-mask']))
-                lines.append('\n')
+                _add_register_definition(
+                    lines,
+                    name=section_name,
+                    position=section['position'],
+                    address=reg['address'],
+                    size=section['size'],
+                    value_mask=section['value-mask'],
+                    clear_mask=section['clear-mask']
+                )
+
 
     lines.append(HEADER_GUARD_STOP.format(guard=guard))
 
@@ -229,6 +240,16 @@ def _add_register_description(lines, reg):
         lines.append('\n' + regart.generate(reg_in, forgiveness=True) + '\n')
     else:
         lines.append('// Register {}\n'.format(reg['name']))
+
+
+def _add_register_definition(lines, name, position, address, size, value_mask, clear_mask):
+    lines.append('#define {}{}{}\n'.format(name, ' '*(DEFINITION_PADDING+1-len(name)), position))
+    lines.append('#define {}_address{}{}\n'.format(name, ' '*(DEFINITION_PADDING-7-len(name)), address))
+    lines.append('#define {}_position{}{}\n'.format(name, ' '*(DEFINITION_PADDING-8-len(name)), position))
+    lines.append('#define {}_size{}{}\n'.format(name, ' '*(DEFINITION_PADDING-4-len(name)), size))
+    lines.append('#define {}_value_mask{}{}\n'.format(name, ' '*(DEFINITION_PADDING-10-len(name)), value_mask))
+    lines.append('#define {}_clear_mask{}{}\n'.format(name, ' '*(DEFINITION_PADDING-10-len(name)), clear_mask))
+    lines.append('\n')
 
 
 def normalize_definition(definition):
@@ -287,6 +308,7 @@ if __name__ == '__main__':
         count += 1
     print('=' * 80)
     print('Done! Execution took {} seconds.'.format(time.clock() - start))
+
 
 #===============================================================================
 #  T E S T   S U I T E
