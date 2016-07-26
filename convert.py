@@ -2,14 +2,24 @@ import os
 import sys
 import re
 import time
+import copy
+try:
+    import regart
+except ImportError:
+    regart = None
 from unittest import TestCase
 
 WORD_WIDTH = '0xff'
 DEFINITION_PADDING = 40
 PRODUCTION = False
+VERBOSE = False
 
 def production_print(s):
     if PRODUCTION:
+        print(s)
+
+def verbose_print(s):
+    if VERBOSE:
         print(s)
 
 def init():
@@ -38,7 +48,6 @@ def get_file_list():
 
 def get_next_file_content():
     for path in get_file_list():
-        production_print('Processing file: {}'.format(path))
         yield (os.path.basename(path), get_file_content(path))
 
 
@@ -47,7 +56,7 @@ def _parse_version(line, data):
     if m:
         version = m.group(1)
         data['version'] = version
-        production_print('File version: {}'.format(version))
+        verbose_print('File version: {}'.format(version))
         return _parse_license
     else:
         return _parse_version
@@ -58,7 +67,7 @@ def _parse_license(line, data):
         data['license'] = []
     data['license'].append(line)
     if re.search('\*/', line):
-        production_print('License parsed')
+        verbose_print('License parsed')
         return _parse_include_guard
     else:
         return _parse_license
@@ -69,8 +78,8 @@ def _parse_include_guard(line, data):
     if m:
         guard = m.group(1)
         data['guard'] = guard
-        production_print('Include guard: {}'.format(guard))
-        production_print('')
+        verbose_print('Include guard: {}'.format(guard))
+        verbose_print('')
         return _parse_include_guard
     m = re.search('#define\s+(.+)', line)
     if m:
@@ -101,7 +110,7 @@ def _parse_reg(line, data):
     if m:
         address = m.group(1)
         last_reg['address'] = address
-        production_print('Register {} @ {}'.format(last_reg['name'], address))
+        verbose_print('Register {} @ {}'.format(last_reg['name'], address))
         return _parse_reg
 
     # parse register section position
@@ -114,7 +123,7 @@ def _parse_reg(line, data):
         if name not in last_reg['sections']:
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['position'] = position
-        production_print('  {} position: {}'.format(name, position))
+        verbose_print('  {} position: {}'.format(name, position))
         return _parse_reg
 
     # parse register section size
@@ -127,7 +136,7 @@ def _parse_reg(line, data):
         if name not in last_reg['sections']:
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['size'] = size
-        production_print('  {} size: {}'.format(name, size))
+        verbose_print('  {} size: {}'.format(name, size))
         return _parse_reg
 
     # parse register section masks
@@ -142,8 +151,8 @@ def _parse_reg(line, data):
             last_reg['sections'][name] = {}
         last_reg['sections'][name]['value-mask'] = value_mask
         last_reg['sections'][name]['clear-mask'] = clear_mask
-        production_print('  {} value-mask: {}'.format(name, value_mask))
-        production_print('  {} clear-mask: {}'.format(name, clear_mask))
+        verbose_print('  {} value-mask: {}'.format(name, value_mask))
+        verbose_print('  {} clear-mask: {}'.format(name, clear_mask))
         return _parse_reg
 
     return _parse_reg
@@ -185,7 +194,6 @@ HEADER_GUARD_STOP = '''\
 
 
 def write_definition(data):
-
     lines = []
     date = time.strftime("%Y-%m-%d")
     version = data['version']
@@ -197,10 +205,10 @@ def write_definition(data):
 
     for reg in data['registers']:
         if 'sections' in reg:
-            lines.append('// Register {}\n'.format(reg['name']))
+            _add_register_description(lines, reg)
             for section_name in reg['sections']:
                 section = reg['sections'][section_name]
-                lines.append('#define {}\n'.format(section_name))
+                lines.append('#define {}{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING+1-len(section_name)), section['position']))
                 lines.append('#define {}_address{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-7-len(section_name)), reg['address']))
                 lines.append('#define {}_position{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-8-len(section_name)), section['position']))
                 lines.append('#define {}_size{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-4-len(section_name)), section['size']))
@@ -208,40 +216,20 @@ def write_definition(data):
                 lines.append('#define {}_clear_mask{}{}\n'.format(section_name, ' '*(DEFINITION_PADDING-10-len(section_name)), section['clear-mask']))
                 lines.append('\n')
 
-
     lines.append(HEADER_GUARD_STOP.format(guard=guard))
 
     with open(os.path.join('output', data['filename']), 'w+') as f:
         for line in lines:
             f.write(line)
 
-def generate_register_art(reg):
-    pass
 
+def _add_register_description(lines, reg):
+    if regart:
+        reg_in = copy.deepcopy(reg)
+        lines.append('\n' + regart.generate(reg_in, forgiveness=True) + '\n')
+    else:
+        lines.append('// Register {}\n'.format(reg['name']))
 
-
-class RegisterArt(TestCase):
-    def test__full_width_section_can_be_rendered(self):
-        input = {
-            'width': 8,
-            'name': 'REGA',
-            'address': '0x123',
-            'sections': {
-                'REGA': {
-                    'position': '0',
-                    'size': '8'
-                }
-            }
-        }
-        expected = '''\
-/*------------------------------#
-| REGA                    0x123 |
-#-------------------------------#
-| 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
-#------------------------------*/
-'''
-        result = generate_register_art(input)
-        self.assertEquals(expected, result)
 
 def normalize_definition(definition):
     def rename_section(reg, section_name):
@@ -269,20 +257,40 @@ def normalize_definition(definition):
 
 
 if __name__ == '__main__':
-    global PRODUCTION
-    PRODUCTION = True
+    start = time.clock()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '-v':
+            VERBOSE = True
+            PRODUCTION = False
+        else:
+            VERBOSE = False
+            PRODUCTION = True
+    else:
+        VERBOSE = False
+        PRODUCTION = True
     init()
+    file_count = len(get_file_list())
+    count = 1
+    if file_count == 1:
+        print('Processing {} header file..'.format(file_count))
+    else:
+        print('Processing {} header files..'.format(file_count))
+    print('='*80)
     for filename, lines in get_next_file_content():
+        print('[{}/{}] {}'.format(count, file_count, filename))
         definition = generate_definition(filename, lines)
-        normalize_definition(definition)
-        write_definition(definition)
-
-
+        if 'registers' in definition:
+            normalize_definition(definition)
+            write_definition(definition)
+        else:
+            print('No parseable content. Nothing to do..')
+        count += 1
+    print('=' * 80)
+    print('Done! Execution took {} seconds.'.format(time.clock() - start))
 
 #===============================================================================
 #  T E S T   S U I T E
 #===============================================================================
-
 
 class DataNormalization(TestCase):
     def test_data_normalization(self):
@@ -330,6 +338,7 @@ class DataNormalization(TestCase):
         }
         normalize_definition(data)
         self.assertEquals(expected, data)
+
 
 class Parsers(TestCase):
     def test_version_parser_on_match(self):
