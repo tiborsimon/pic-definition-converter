@@ -9,7 +9,7 @@ except ImportError:
     regart = None
 from unittest import TestCase
 
-WORD_WIDTH = '0xff'
+WORD_WIDTH = '0xFF'
 DEFINITION_PADDING = 40
 PRODUCTION = False
 VERBOSE = False
@@ -205,20 +205,27 @@ def write_definition(data):
     for reg in data['registers']:
         if 'sections' in reg:
             _add_register_description(lines, reg)
-            _add_register_definition(
-                lines,
-                name=reg['name'],
-                position='0x0',
-                address=reg['address'],
-                size='0x8',
-                value_mask=WORD_WIDTH,
-                clear_mask='0x0'
-            )
+            section_names = list(reg['sections'].keys())
+            sections = []
             for section_name in reg['sections']:
                 section = reg['sections'][section_name]
+                section['name'] = section_name
+                sections.append(section)
+            sections.sort(key=lambda s: s['position'])
+            if reg['name'] not in section_names:
                 _add_register_definition(
                     lines,
-                    name=section_name,
+                    name=reg['name'],
+                    position='0x0',
+                    address=reg['address'],
+                    size='0x8',
+                    value_mask=WORD_WIDTH,
+                    clear_mask='0x0'
+                )
+            for section in sections:
+                _add_register_definition(
+                    lines,
+                    name=section['name'],
                     position=section['position'],
                     address=reg['address'],
                     size=section['size'],
