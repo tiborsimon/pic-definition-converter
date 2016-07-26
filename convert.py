@@ -9,6 +9,11 @@ except ImportError:
     regart = None
 from unittest import TestCase
 
+
+#===============================================================================
+#  E N V I R O N M E N T   C O N F I G
+#===============================================================================
+
 WORD_WIDTH = '0xFF'
 DEFINITION_PADDING = 40
 PRODUCTION = False
@@ -22,12 +27,10 @@ def verbose_print(s):
     if VERBOSE:
         print(s)
 
-def init():
-    if not os.path.isdir('input'):
-        os.mkdir('input')
-    if not os.path.isdir('output'):
-        os.mkdir('output')
 
+#===============================================================================
+#  I N P U T   F I L E   P A R S I N G
+#===============================================================================
 
 def get_file_content(path):
     with open(path) as f:
@@ -158,6 +161,31 @@ def _parse_reg(line, data):
     return _parse_reg
 
 
+def normalize_definition(definition):
+    def rename_section(reg, section_name):
+        new_name = reg['name'] + '_' + section_name
+        reg['sections'][new_name] = dict(reg['sections'][section_name])
+        del reg['sections'][section_name]
+
+    for reg in definition['registers']:
+        index = definition['registers'].index(reg)
+        if 'sections' in reg:
+            for section_name in reg['sections']:
+                rename_list = []
+                for other_reg in definition['registers'][index+1:]:
+                    if 'sections' in other_reg:
+                        for other_section_name in other_reg['sections']:
+                            if section_name == other_section_name:
+                                rename_list.append({
+                                    'reg': other_reg,
+                                    'section-name': other_section_name
+                                })
+                if rename_list:
+                    rename_section(reg, section_name)
+                    for item in rename_list:
+                        rename_section(item['reg'], item['section-name'])
+
+
 def generate_definition(filename, lines):
     data = {
         'filename': filename
@@ -165,7 +193,13 @@ def generate_definition(filename, lines):
     parser = _parse_version
     for line in lines:
         parser = parser(line, data)
+    normalize_definition(data)
     return data
+    
+
+#===============================================================================
+#  O U T P U T   F I L E   G E N E R A T I O N
+#===============================================================================
 
 HEADER = '''\
 /* Generated on {date}
@@ -192,8 +226,11 @@ HEADER_GUARD_STOP = '''\
 #endif // {guard}
 '''
 
+
 def write_definition(data):
     lines = []
+    lines_tdd = []
+
     date = time.strftime("%Y-%m-%d")
     version = data['version']
     license = '\n'.join(data['license'])
@@ -201,20 +238,30 @@ def write_definition(data):
     lines.append(HEADER.format(date=date, version=version, license=license))
     lines.append(HEADER_GUARD_START.format(guard=guard))
     lines.append('\n')
+    lines_tdd.append(HEADER.format(date=date, version=version, license=license))
+    lines_tdd.append(HEADER_GUARD_START.format(guard=guard))
+    lines_tdd.append('\n')
+
+    tdd_data = {'counter': 0}
 
     for reg in data['registers']:
         if 'sections' in reg:
             _add_register_description(lines, reg)
+
             section_names = list(reg['sections'].keys())
             sections = []
+            
             for section_name in reg['sections']:
                 section = reg['sections'][section_name]
                 section['name'] = section_name
                 sections.append(section)
             sections.sort(key=lambda s: s['position'])
+
             if reg['name'] not in section_names:
                 _add_register_definition(
                     lines,
+                    lines_tdd,
+                    tdd_data,
                     name=reg['name'],
                     position='0x0',
                     address=reg['address'],
@@ -225,6 +272,8 @@ def write_definition(data):
             for section in sections:
                 _add_register_definition(
                     lines,
+                    lines_tdd,
+                    tdd_data,
                     name=section['name'],
                     position=section['position'],
                     address=reg['address'],
@@ -235,9 +284,17 @@ def write_definition(data):
 
 
     lines.append(HEADER_GUARD_STOP.format(guard=guard))
+    lines_tdd.append('\n')
+    lines_tdd.append(HEADER_GUARD_STOP.format(guard=guard))
 
     with open(os.path.join('output', data['filename']), 'w+') as f:
         for line in lines:
+            f.write(line)
+
+    temp = data['filename'].split('.')
+    tdd_filename = temp[0] + '_tdd.' + temp[1]
+    with open(os.path.join('output', tdd_filename), 'w+') as f:
+        for line in lines_tdd:
             f.write(line)
 
 
@@ -249,7 +306,7 @@ def _add_register_description(lines, reg):
         lines.append('// Register {}\n'.format(reg['name']))
 
 
-def _add_register_definition(lines, name, position, address, size, value_mask, clear_mask):
+def _add_register_definition(lines, lines_tdd, tdd_data, name, position, address, size, value_mask, clear_mask):
     lines.append('#define {}{}{}\n'.format(name, ' '*(DEFINITION_PADDING+1-len(name)), position))
     lines.append('#define {}_address{}{}\n'.format(name, ' '*(DEFINITION_PADDING-7-len(name)), address))
     lines.append('#define {}_position{}{}\n'.format(name, ' '*(DEFINITION_PADDING-8-len(name)), position))
@@ -258,34 +315,19 @@ def _add_register_definition(lines, name, position, address, size, value_mask, c
     lines.append('#define {}_clear_mask{}{}\n'.format(name, ' '*(DEFINITION_PADDING-10-len(name)), clear_mask))
     lines.append('\n')
 
+    lines_tdd.append('#define {}{}{}\n'.format(name, ' '*(DEFINITION_PADDING-10-len(name)), tdd_data['counter']))
+    tdd_data['counter'] += 1
 
-def normalize_definition(definition):
-    def rename_section(reg, section_name):
-        new_name = reg['name'] + '_' + section_name
-        reg['sections'][new_name] = dict(reg['sections'][section_name])
-        del reg['sections'][section_name]
 
-    for reg in definition['registers']:
-        index = definition['registers'].index(reg)
-        if 'sections' in reg:
-            for section_name in reg['sections']:
-                rename_list = []
-                for other_reg in definition['registers'][index+1:]:
-                    if 'sections' in other_reg:
-                        for other_section_name in other_reg['sections']:
-                            if section_name == other_section_name:
-                                rename_list.append({
-                                    'reg': other_reg,
-                                    'section-name': other_section_name
-                                })
-                if rename_list:
-                    rename_section(reg, section_name)
-                    for item in rename_list:
-                        rename_section(item['reg'], item['section-name'])
-
+#===============================================================================
+#  M A I N   E N T R Y   P O I N T
+#===============================================================================
 
 if __name__ == '__main__':
+    # measure execution time
     start = time.clock()
+
+    # input argument parsing
     if len(sys.argv) > 1:
         if sys.argv[1] == '-v':
             VERBOSE = True
@@ -296,7 +338,14 @@ if __name__ == '__main__':
     else:
         VERBOSE = False
         PRODUCTION = True
-    init()
+
+    # init directories
+    if not os.path.isdir('input'):
+        os.mkdir('input')
+    if not os.path.isdir('output'):
+        os.mkdir('output')
+
+    # start processing
     file_count = len(get_file_list())
     count = 1
     if file_count == 1:
@@ -308,7 +357,6 @@ if __name__ == '__main__':
         print('[{}/{}] {}'.format(count, file_count, filename))
         definition = generate_definition(filename, lines)
         if 'registers' in definition:
-            normalize_definition(definition)
             write_definition(definition)
         else:
             print('No parseable content. Nothing to do..')
