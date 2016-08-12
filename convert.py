@@ -167,23 +167,24 @@ def normalize_definition(definition):
         reg['sections'][new_name] = dict(reg['sections'][section_name])
         del reg['sections'][section_name]
 
-    for reg in definition['registers']:
-        index = definition['registers'].index(reg)
-        if 'sections' in reg:
-            for section_name in reg['sections']:
-                rename_list = []
-                for other_reg in definition['registers'][index+1:]:
-                    if 'sections' in other_reg:
-                        for other_section_name in other_reg['sections']:
-                            if section_name == other_section_name:
-                                rename_list.append({
-                                    'reg': other_reg,
-                                    'section-name': other_section_name
-                                })
-                if rename_list:
-                    rename_section(reg, section_name)
-                    for item in rename_list:
-                        rename_section(item['reg'], item['section-name'])
+    if 'registers' in definition:
+        for reg in definition['registers']:
+            index = definition['registers'].index(reg)
+            if 'sections' in reg:
+                for section_name in reg['sections']:
+                    rename_list = []
+                    for other_reg in definition['registers'][index+1:]:
+                        if 'sections' in other_reg:
+                            for other_section_name in other_reg['sections']:
+                                if section_name == other_section_name:
+                                    rename_list.append({
+                                        'reg': other_reg,
+                                        'section-name': other_section_name
+                                    })
+                    if rename_list:
+                        rename_section(reg, section_name)
+                        for item in rename_list:
+                            rename_section(item['reg'], item['section-name'])
 
 
 def generate_definition(filename, lines):
